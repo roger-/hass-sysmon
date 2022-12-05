@@ -29,7 +29,37 @@ Now run `sysmon.sh` or `sysmon.sh <config directory>` (if using a config file in
 
 <img width="247" alt="Screenshot 2022-11-15 090209" src="https://user-images.githubusercontent.com/1389709/201938699-7f4ff2cc-e9e7-4ef5-93c9-512f36b111d0.png">
 
-On OpenWrt you can have this automatically run at boot by modifying `/etc/rc.local`, and on modern Debian-based systems you can create a systemd service.
+# Installing service
+
+## Debian
+On modern Debian-based systems you can create a systemd service by running
+
+```
+sudo systemctl edit --force --full sysmon.service
+```
+
+and pasting contents of `sysmon.service` (and modifying the script path). Next run the following to enable and start the service:
+
+```
+sudo systemctl enable sysmon.service
+sudo systemctl restart sysmon.service
+```
+
+And ensure it's running correctly with:
+
+```
+sudo systemctl status sysmon.service
+```
+
+## OpenWrt
+On OpenWrt and systems with SysV-style initscripts you can have this automatically run at boot by modifying `/etc/rc.local` to add something like:
+
+```
+...
+/PATH_HERE/sysmon.sh &
+...
+exit 0
+```
 
 # Additional notes
 
