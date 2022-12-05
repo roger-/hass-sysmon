@@ -91,8 +91,8 @@ macid()
         nic_name=$(basename "$nic_path")
         is_virtual=$(deref_path_symlink "$nic_path" | grep virtual)
 
-        # skip possibly virtual or inactive devices  &&  
-        if [ ! -z "$is_virtual" ] && [ "$(cat $nic_path/operstate)" = "up" ]; then 
+        # skip possibly virtual or inactive devices
+        if [ -z "$is_virtual" ] && [ "$(cat $nic_path/operstate)" = "up" ]; then 
             cat $nic_path/address | head -n 1 | sed 's/://g'
             break
         fi
