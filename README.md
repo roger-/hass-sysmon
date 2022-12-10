@@ -12,6 +12,7 @@ hass-sysmon is a ~10 KB (almost) POSIX-compliant shell script (Dash, Bash, etc.)
 * Uptime
 * Temperature
 * WiFi RSSI/link quality
+* Ping RTT (single server for now)
 
 # How
 HTTP POST messages are sent to the Home Assistant MQTT service, which then publishes the messages over MQTT back to Home Assistant. If available, the `curl` command will be used otherwise it will fallback to `netcat`/`nc`, which is installed by default on OpenWrt and some Debian systems. 
