@@ -57,7 +57,7 @@ On OpenWrt and systems with SysV-style initscripts you can have this automatical
 
 ```
 ...
-/PATH_HERE/sysmon.sh &
+sleep 60 && /PATH_HERE/sysmon.sh &
 ...
 exit 0
 ```
