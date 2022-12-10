@@ -1,5 +1,5 @@
 #!/bin/sh
-# sysmon.sh v0.2
+# sysmon.sh v0.3
 
 # Home Assistant configuration defaults (can be overwritten in .config file)
 HASS_TOKEN=""
@@ -9,7 +9,7 @@ HASS_MQTT_PREFIX="homeassistant"
 
 # MQTT path to publish states
 MQTT_PUB_PATH="/home/servers"
-MQTT_PUBLISH_PERIOD=15
+MQTT_PUBLISH_PERIOD=20
 
 # name of network interface (e.g. eth0) otherwise first active one will be used
 NETWORK_IFACE=""
@@ -17,8 +17,21 @@ NETWORK_IFACE=""
 # debug levels: 0 = DEBUG, 1 = INFO, 2 = WARN, 3 = ERROR
 DEBUG_LEVEL=1
 
-# how long to wait for the server to respond (or sleep if not supported)
+# how long to wait for the Home Assistant server to respond (or to sleep if wait not supported)
 TIMEOUT_SERVER=1
+
+# sensor config
+ENABLE_DISK=1
+ENABLE_LOAD=1
+ENABLE_MEMORY=1
+ENABLE_SWAP=1
+ENABLE_DISK=1
+ENABLE_WIFI=1
+ENABLE_UPTIME=1
+ENABLE_TEMPERATURE=1
+ENABLE_PING=1
+
+CONFIG_PING_HOST="192.168.1.1"
 
 ##### Logging functions #####
 
@@ -91,7 +104,7 @@ macid()
         nic_name=$(basename "$nic_path")
         is_virtual=$(deref_path_symlink "$nic_path" | grep virtual)
 
-        # skip possibly virtual or inactive devices
+        # skip possibly virtual or inactive devices 
         if [ -z "$is_virtual" ] && [ "$(cat $nic_path/operstate)" = "up" ]; then 
             cat $nic_path/address | head -n 1 | sed 's/://g'
             break
@@ -156,7 +169,7 @@ wifi_signal() {
 
 temperature() {
     if ! ls /sys/class/thermal/thermal_zone* > /dev/null 2>&1; then
-        return
+        return 1
     fi
 
     sep=""
@@ -176,29 +189,47 @@ memory_usage() {
     mem_free_kB=$(echo "$mem" | grep MemAvailable | awk '{printf $2}')
     mem_used_pc=$(echo "$mem" | grep MemTotal | awk '{printf 100 * ($2 - '$mem_free_kB') / $2}')
 
-    swap_total_kB=$(echo "$mem" | grep SwapTotal | awk '{printf $2}')
-
-    # check if no swap
-    if [ $swap_total_kB -ne 0 ]; then
-        swap_free_kB=$(echo "$mem" | grep SwapFree | awk '{printf $2}')
-        swap_used_pc=$(echo | awk '{printf 100 * ('$swap_total_kB' - '$swap_free_kB') / '$swap_total_kB'}') 
-
-        print_key_vals \
-            swap_free_kB $swap_free_kB \
-            swap_used_pc $swap_used_pc
-        echo -n ","
-    fi
-
     print_key_vals \
         mem_free_kB $mem_free_kB \
         mem_used_pc $mem_used_pc
+}
+
+swap_usage() {
+    mem=$(cat /proc/meminfo)
+
+    swap_total_kB=$(echo "$mem" | grep SwapTotal | awk '{printf $2}')
+
+    # check if no swap
+    if [ $swap_total_kB -eq 0 ]; then
+        return 1
+    fi
+
+    swap_free_kB=$(echo "$mem" | grep SwapFree | awk '{printf $2}')
+    swap_used_pc=$(echo | awk '{printf 100 * ('$swap_total_kB' - '$swap_free_kB') / '$swap_total_kB'}') 
+
+    print_key_vals \
+        swap_free_kB $swap_free_kB \
+        swap_used_pc $swap_used_pc
 }
 
 host_name() {
     print_key_vals host_name \"$(cat /proc/sys/kernel/hostname)\"
 }
 
-##### Network functions #####
+ping_host() {
+    result="$(ping $CONFIG_PING_HOST -q -c 1 -W 1)"
+    retval=$?
+
+    if ! [ $retval -eq 0 ]; then
+        info ping $CONFIG_PING_HOST failed: $(echo "$result" | tail -n 1)
+        return 1
+    fi
+
+    rtt=$(echo $result | tail -n 1 | cut -d= -f2 | cut -d\/ -f 1 | tr -d ' ')
+    print_key_vals ping_rtt_ms $rtt
+}
+
+##### Core network functions #####
 
 HTTP_HEADER_CTYPE="Content-Type: application/json"
 
@@ -211,11 +242,12 @@ post_json_message_curl() {
 
     url="http://${HASS_SERVER}:${HASS_PORT}${path}"
 
-    http_code=$(curl -m $TIMEOUT_SERVER --output /dev/null -s -X POST -w "%{http_code}\\n" -H "$HTTP_HEADER_AUTH" -H "$HTTP_HEADER_CTYPE" -d "$json" "$url")
+    response=$(curl -m $TIMEOUT_SERVER -s -X POST -w "\\n%{http_code}\\n" -H "$HTTP_HEADER_AUTH" -H "$HTTP_HEADER_CTYPE" -d "$json" "$url")
+    http_code=$(echo "$response" | tail -n 1)
 
     if [ "$http_code" != "200" ]; then
-        error "received error:"
-        printf '%b\n' "$http_code"
+        error "received HTTP code $http_code, full response:"
+        printf '%b' "$result"
     else
         debug "message receipt confirmed"
     fi
@@ -239,17 +271,19 @@ Content-Length: ${#json}\r
     http_code=$(echo "$result" | awk '/^HTTP/{print $2; exit}')
 
     if [ ! $http_code ]; then
-        warning "message receipt not confirmed"
+        info "message receipt not confirmed"
         return
     fi
 
     if [ "$http_code" != "200" ]; then
-        error "received error:"
+        error "received HTTP code $http_code, full response:"
         printf '%b' "$result"
     else
         debug "message receipt confirmed"
     fi
 }
+
+##### Network helper functions #####
 
 post_json_message() {
     if [ $HAS_CURL -eq 1 ]; then
@@ -269,10 +303,12 @@ post_sensor_state() {
 post_mqtt() {
     topic="$1"
     json_str=$(echo "$2" | sed 's/"/\\"/g')
-    msg=$(print_json topic \"$topic\" payload "\"$json_str\"")
+    msg=$(print_json topic \"$topic\" payload "\"$json_str\"" retain true)
 
     post_json_message "$HTTP_PATH_MQTT" "$msg"
 }
+
+##### Auto-discovery and state publishing functions #####
 
 publish_state_loop() {
     info "Publishing state to topic $STATE_TOPIC every $MQTT_PUBLISH_PERIOD s"
@@ -291,14 +327,15 @@ publish_state_loop() {
 
         time_pub_next=$(( $time_pub_next + $MQTT_PUBLISH_PERIOD))
 
-        data="$(host_name),$(memory_usage),$(avg_load),$(uptime_duration),$(disk_usage),$(wifi_signal)"
-
-        # add temperature sensors if available
-        temp=$(temperature)
-
-        if [ $temp ]; then
-            data="${data},${temp}"
-        fi
+        data="$(host_name)"
+        [ $ENABLE_MEMORY      -eq 1 ] && val=$(memory_usage)    && data="${data},$val"
+        [ $ENABLE_SWAP        -eq 1 ] && val=$(swap_usage)      && data="${data},$val"
+        [ $ENABLE_DISK        -eq 1 ] && val=$(disk_usage)      && data="${data},$val"
+        [ $ENABLE_LOAD        -eq 1 ] && val=$(avg_load)        && data="${data},$val"
+        [ $ENABLE_WIFI        -eq 1 ] && val=$(wifi_signal)     && data="${data},$val"
+        [ $ENABLE_UPTIME      -eq 1 ] && val=$(uptime_duration) && data="${data},$val"
+        [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
+        [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
 
         json="{${data}}"
 
@@ -341,31 +378,37 @@ publish_discovery_sensor() {
 publish_discovery_all() {
     info "Sending discovery messages"
 
-    publish_discovery_sensor uptime_sec "Uptime" "s" "duration"
+    [ $ENABLE_UPTIME -eq 1 ] && publish_discovery_sensor uptime_sec "Uptime" "s" "duration"
 
-    publish_discovery_sensor avg_load_1min_pc "CPU load (1 min avg)" "%"
-    publish_discovery_sensor avg_load_5min_pc "CPU load (5 min avg)" "%"
-    publish_discovery_sensor avg_load_10min_pc "CPU load (10 min avg)" "%"
+    [ $ENABLE_PING   -eq 1 ] && publish_discovery_sensor ping_rtt_ms "Ping RTT" "ms" "duration"    
 
-    publish_discovery_sensor mem_free_kB "Memory free" "kB"
-    publish_discovery_sensor mem_used_pc "Memory used" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_1min_pc "CPU load (1 min avg)" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_5min_pc "CPU load (5 min avg)" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_10min_pc "CPU load (10 min avg)" "%"
 
-    publish_discovery_sensor swap_free_kB "Swap free" "kB"
-    publish_discovery_sensor swap_used_pc "Swap used" "%"
+    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_free_kB "Memory free" "kB"
+    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_used_pc "Memory used" "%"
 
-    publish_discovery_sensor wifi_link_pc "WiFi link" "%"
-    publish_discovery_sensor wifi_level_dbm "WiFi level" "dBm" "signal_strength"
+    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_free_kB "Swap free" "kB"
+    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_used_pc "Swap used" "%"
 
-    publish_discovery_sensor disk_free_kb "Disk free" "kB"
-    publish_discovery_sensor disk_used_pc "Disk used" "%"
+    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_link_pc "WiFi link" "%"
+    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_level_dbm "WiFi level" "dBm" "signal_strength"
 
-    for sensor_name in $(temperature_sensor_names); do        
-        var_name="temperature_${sensor_name}_C"
-        sensor_name=$(echo $sensor_name | sed 's/_temp$//' | sed 's/_/ /')
+    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_free_kb "Disk free" "kB"
+    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_used_pc "Disk used" "%"
 
-        publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
-    done
+    if [ $ENABLE_TEMPERATURE -eq 1 ]; then
+        for sensor_name in $(temperature_sensor_names); do        
+            var_name="temperature_${sensor_name}_C"
+            sensor_name=$(echo $sensor_name | sed 's/_temp$//' | sed 's/_/ /')
+
+            publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
+        done
+    fi
 }
+
+##### main #####
 
 setup() {
     config_file_name="$(basename $0 .sh).config"
@@ -418,6 +461,7 @@ start() {
     setup
     publish_discovery_all
 
+    # HACK: send discovery twice to improve chances with basic netcat
     if [ $HAS_NETCAT_BASIC -eq 1 ]; then
         info "Discovery messages may not have been delivered, resending"
         publish_discovery_all
