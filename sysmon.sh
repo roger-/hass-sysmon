@@ -1,5 +1,5 @@
 #!/bin/sh
-# sysmon.sh v0.3
+# sysmon.sh v0.32
 
 # Home Assistant configuration defaults (can be overwritten in .config file)
 HASS_TOKEN=""
@@ -30,8 +30,12 @@ ENABLE_WIFI=1
 ENABLE_UPTIME=1
 ENABLE_TEMPERATURE=1
 ENABLE_PING=1
+ENABLE_TOP_CPU=0
 
 CONFIG_PING_HOST="192.168.1.1"
+
+CONFIG_TOP_CPU_IGNORE_COMMAND="top"
+CONFIG_TOP_CPU_MAX=3
 
 ##### Logging functions #####
 
@@ -71,6 +75,10 @@ cmd_exists() {
   command -v "$1" 2>&1 >/dev/null
 }
 
+beginswith() {
+    case "$2" in "$1"*) true;; *) false;; esac;
+}
+
 print_key_vals() {
     echo -n "\"$1\":$2"
     shift 2
@@ -85,31 +93,29 @@ print_json() {
     echo -n "{$(print_key_vals "$@")}"
 }
 
-deref_path_symlink()
-{
+deref_path_symlink() {
     echo $(cd "$*" && pwd -P)
 }
 
-macid()
-{
+macid() {
     nic_name=$1
 
-    # use nic if given
-    if ! [ -z "$nic_name" ]; then
-        cat /sys/class/net/$nic_name/address | head -n 1 | sed 's/://g'
-        return 0
-    fi
+    cat /sys/class/net/$nic_name/address | head -n 1 | sed 's/://g'
+}
 
+active_nic() {
     for nic_path in /sys/class/net/*; do
         nic_name=$(basename "$nic_path")
         is_virtual=$(deref_path_symlink "$nic_path" | grep virtual)
 
         # skip possibly virtual or inactive devices 
         if [ -z "$is_virtual" ] && [ "$(cat $nic_path/operstate)" = "up" ]; then 
-            cat $nic_path/address | head -n 1 | sed 's/://g'
-            break
+            echo "$nic_name"
+            return 0
         fi
     done
+
+    return 1
 }
 
 temperature_sensor_names() {
@@ -118,7 +124,7 @@ temperature_sensor_names() {
     fi
 
     for tz in /sys/class/thermal/thermal_zone*; do
-        echo $(cat $tz/type | sed 's/-/_/')
+        cat "$tz"/type | sed 's/-/_/'
     done
 }
 
@@ -137,6 +143,44 @@ avg_load() {
         avg_load_1min_pc $avg_load_1min_pc \
         avg_load_5min_pc $avg_load_5min_pc \
         avg_load_10min_pc $avg_load_10min_pc
+}
+
+top_cpu() {
+    field_ind_to_name="$(top -bn1 | grep -E  '^ +PID' | sed 's/\s\s*/\n/g' |tail -n +2| grep -nx ".*")"
+
+    cpu_ind=$(echo "$field_ind_to_name" | grep "%CPU" | cut -d: -f1)
+    command_ind=$(echo "$field_ind_to_name" | grep "COMMAND" | cut -d: -f1)
+
+    # below assumes COMMAND is last column and PID is first
+    top_commands=$(top -bn1 | sed -n '/\s*PID.*$/,$p' | tail -n +2 | sed 's/\s\s*/ /g' | sed 's/^\s*//g' | cut -d' ' -f"${cpu_ind},${command_ind}-")
+
+    i=1
+    did_print=0
+
+    echo "$top_commands" | while read line; do
+        cpu_pc=$(echo $line | cut -d' ' -f1 | awk '{printf $1 / '$CPU_COUNT'}')
+        command_name=$(echo $line | cut -d' ' -f2-)
+
+        # ignore given command 
+        if [ ! -z "$CONFIG_TOP_CPU_IGNORE_COMMAND" ] && (beginswith "$command_name" "$CONFIG_TOP_CPU_IGNORE_COMMAND"); then
+            continue
+        fi
+
+        if [ $did_print -eq 1 ]; then
+            echo -n ","
+        fi
+        did_print=1
+
+        print_key_vals \
+            "top_${i}_command_name"   "\"$command_name\"" \
+            "top_${i}_command_cpu_pc" "$cpu_pc"
+
+        if [ $i -ge $CONFIG_TOP_CPU_MAX ]; then
+            return
+        fi
+
+        i=$((i+1))
+    done
 }
 
 uptime_duration() {
@@ -246,8 +290,9 @@ post_json_message_curl() {
     http_code=$(echo "$response" | tail -n 1)
 
     if [ "$http_code" != "200" ]; then
+        debug "sent JSON: $json"
         error "received HTTP code $http_code, full response:"
-        printf '%b' "$result"
+        printf '%b' "$response" | head -n-1
     else
         debug "message receipt confirmed"
     fi
@@ -265,10 +310,10 @@ Content-Length: ${#json}\r
 "
     data="${data}${json}"
 
-    result=$(printf '%b' "$data" | eval "$NETCAT_CMD $HASS_SERVER $HASS_PORT" 2>&1)
+    response=$(printf '%b' "$data" | eval "$NETCAT_CMD $HASS_SERVER $HASS_PORT" 2>&1)
     sleep $TIMEOUT_SERVER
 
-    http_code=$(echo "$result" | awk '/^HTTP/{print $2; exit}')
+    http_code=$(echo "$response" | awk '/^HTTP/{print $2; exit}')
 
     if [ ! $http_code ]; then
         info "message receipt not confirmed"
@@ -276,8 +321,9 @@ Content-Length: ${#json}\r
     fi
 
     if [ "$http_code" != "200" ]; then
+        debug "sent JSON: $json"
         error "received HTTP code $http_code, full response:"
-        printf '%b' "$result"
+        printf '%b' "$response"
     else
         debug "message receipt confirmed"
     fi
@@ -311,7 +357,7 @@ post_mqtt() {
 ##### Auto-discovery and state publishing functions #####
 
 publish_state_loop() {
-    info "Publishing state to topic $STATE_TOPIC every $MQTT_PUBLISH_PERIOD s"
+    info "publishing state to topic $STATE_TOPIC every $MQTT_PUBLISH_PERIOD s"
 
     time_pub_next=$(date +"%s")
 
@@ -336,10 +382,11 @@ publish_state_loop() {
         [ $ENABLE_UPTIME      -eq 1 ] && val=$(uptime_duration) && data="${data},$val"
         [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
         [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
+        [ $ENABLE_TOP_CPU     -eq 1 ] && val=$(top_cpu)         && data="${data},$val"
 
         json="{${data}}"
 
-        debug "Publishing state message"
+        debug "publishing state message"
         post_mqtt "$STATE_TOPIC" "$json"
     done
 }
@@ -359,24 +406,21 @@ publish_discovery_sensor() {
     msg=$(print_key_vals name "\"$name\"")
     msg=$msg,$(print_key_vals state_topic \"$STATE_TOPIC\")
     msg=$msg,$(print_key_vals json_attributes_topic \"$STATE_TOPIC\")
-    msg=$msg,$(print_key_vals unit_of_measurement \"$unit_of_measurement\")
     msg=$msg,$(print_key_vals expire_after \"$((5 * $MQTT_PUBLISH_PERIOD))\")
     msg=$msg,$(print_key_vals value_template "\"{{ value_json.${param} }}\"")
     msg=$msg,$(print_key_vals unique_id \"$DEVICE_NAME-$param\")
     msg=$msg,$(print_key_vals device "$device")
-
-    if [ $device_class ]; then
-        msg="$msg,$(print_key_vals device_class \"$device_class\")"
-    fi
+    [ $device_class ]        && msg="$msg,$(print_key_vals device_class \"$device_class\")"
+    [ $unit_of_measurement ] && msg=$msg,$(print_key_vals unit_of_measurement \"$unit_of_measurement\")
 
     msg={$msg}
 
-    debug "Sending discovery message for state $param"
+    debug "sending discovery message for state $param"
     post_mqtt "$config_topic" "$msg"
 }
 
 publish_discovery_all() {
-    info "Sending discovery messages"
+    info "sending discovery messages"
 
     [ $ENABLE_UPTIME -eq 1 ] && publish_discovery_sensor uptime_sec "Uptime" "s" "duration"
 
@@ -398,6 +442,16 @@ publish_discovery_all() {
     [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_free_kb "Disk free" "kB"
     [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_used_pc "Disk used" "%"
 
+    if [ $ENABLE_TOP_CPU -eq 1 ]; then
+        i=1
+        while [ $i -le $CONFIG_TOP_CPU_MAX ]; do
+            publish_discovery_sensor top_${i}_command_cpu_pc "Top $i command CPU load" "%"
+            publish_discovery_sensor top_${i}_command_name "Top $i command name" ""
+
+            i=$(($i+1))
+        done
+    fi
+
     if [ $ENABLE_TEMPERATURE -eq 1 ]; then
         for sensor_name in $(temperature_sensor_names); do        
             var_name="temperature_${sensor_name}_C"
@@ -415,7 +469,7 @@ setup() {
     config_path_full="${PATH_CONFIG}/${config_file_name}"
 
     if [ -f "$config_path_full" ]; then
-        info "Loading config from $config_path_full"
+        info "loading config from $config_path_full"
         . "$config_path_full"
     fi
 
@@ -424,18 +478,18 @@ setup() {
 
     if cmd_exists curl; then
         HAS_CURL=1
-        debug  "Using curl"
+        debug  "using curl"
         return 0
     elif cmd_exists netcat; then
         HAS_NETCAT=1
         NETCAT_CMD="netcat"
-        debug "Using netcat"
+        debug "using netcat"
     elif cmd_exists nc; then
         HAS_NETCAT=1
         NETCAT_CMD="nc"
-        debug "Using nc"
+        debug "using nc"
     else
-        error "Missing curl and netcat/nc, please install one"
+        error "missing curl and netcat/nc, please install one"
         exit 1
     fi
 
@@ -455,15 +509,25 @@ start() {
     HAS_NETCAT_BASIC=0
     NETCAT_CMD="netcat"
 
-    DEVICE_NAME="$(macid $NETWORK_IFACE)-$(cat /proc/sys/kernel/hostname)"
+    # figure out MAC address on given interface, or first active one found
+    [ -z "$NETWORK_IFACE" ] && NETWORK_IFACE=$(active_nic)
+    MAC_ID="$(macid $NETWORK_IFACE)"
+    if [ -z "$MAC_ID" ]; then
+        error "couldn't determine MAC address, is interface up?"
+        exit 1
+    fi
+
+    DEVICE_NAME="$MAC_ID-$(cat /proc/sys/kernel/hostname)"
     STATE_TOPIC="$MQTT_PUB_PATH/$DEVICE_NAME/state"
+
+    info "using device name: $DEVICE_NAME"
 
     setup
     publish_discovery_all
 
     # HACK: send discovery twice to improve chances with basic netcat
     if [ $HAS_NETCAT_BASIC -eq 1 ]; then
-        info "Discovery messages may not have been delivered, resending"
+        info "discovery messages may not have been delivered, resending"
         publish_discovery_all
     fi
 
