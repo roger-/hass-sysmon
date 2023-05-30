@@ -132,9 +132,9 @@ temperature_sensor_names() {
 }
 
 sensor_prefix_generator() {
-    if [ $SENSOR_PREFIX_OPTION == "0" ]; then
+    if [ "$SENSOR_PREFIX_OPTION" = "0" ]; then
         SENSOR_PREFIX=""
-    elif [ $SENSOR_PREFIX_OPTION == "1" ]; then
+    elif [ "$SENSOR_PREFIX_OPTION" = "1" ]; then
         SENSOR_PREFIX=$(cat /proc/sys/kernel/hostname)
     else 
         SENSOR_PREFIX=$SENSOR_PREFIX_OPTION
