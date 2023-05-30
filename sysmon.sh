@@ -11,6 +11,9 @@ HASS_MQTT_PREFIX="homeassistant"
 MQTT_PUB_PATH="/home/servers"
 MQTT_PUBLISH_PERIOD=20
 
+# Define sensor prefix. Options: 0 = none (default and if not 1 or string), 1 = hostname, custom if string
+SENSOR_PREFIX_OPTION=0
+
 # name of network interface (e.g. eth0) otherwise first active one will be used
 NETWORK_IFACE=""
 
@@ -422,31 +425,31 @@ publish_discovery_sensor() {
 publish_discovery_all() {
     info "sending discovery messages"
 
-    [ $ENABLE_UPTIME -eq 1 ] && publish_discovery_sensor uptime_sec "Uptime" "s" "duration"
+    [ $ENABLE_UPTIME -eq 1 ] && publish_discovery_sensor uptime_sec "${SENSOR_PREFIX} Uptime" "s" "duration"
 
-    [ $ENABLE_PING   -eq 1 ] && publish_discovery_sensor ping_rtt_ms "Ping RTT" "ms" "duration"    
+    [ $ENABLE_PING   -eq 1 ] && publish_discovery_sensor ping_rtt_ms "${SENSOR_PREFIX} Ping RTT" "ms" "duration"    
 
-    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_1min_pc "CPU load (1 min avg)" "%"
-    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_5min_pc "CPU load (5 min avg)" "%"
-    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_10min_pc "CPU load (10 min avg)" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_1min_pc "${SENSOR_PREFIX} CPU load (1 min avg)" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_5min_pc "${SENSOR_PREFIX} CPU load (5 min avg)" "%"
+    [ $ENABLE_LOAD   -eq 1 ] && publish_discovery_sensor avg_load_10min_pc "${SENSOR_PREFIX} CPU load (10 min avg)" "%"
 
-    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_free_kB "Memory free" "kB"
-    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_used_pc "Memory used" "%"
+    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_free_kB "${SENSOR_PREFIX} Memory free" "kB"
+    [ $ENABLE_MEMORY -eq 1 ] && publish_discovery_sensor mem_used_pc "${SENSOR_PREFIX} Memory used" "%"
 
-    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_free_kB "Swap free" "kB"
-    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_used_pc "Swap used" "%"
+    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_free_kB "${SENSOR_PREFIX} Swap free" "kB"
+    [ $ENABLE_SWAP   -eq 1 ] && publish_discovery_sensor swap_used_pc "${SENSOR_PREFIX} Swap used" "%"
 
-    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_link_pc "WiFi link" "%"
-    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_level_dbm "WiFi level" "dBm" "signal_strength"
+    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_link_pc "${SENSOR_PREFIX} WiFi link" "%"
+    [ $ENABLE_WIFI   -eq 1 ] && publish_discovery_sensor wifi_level_dbm "${SENSOR_PREFIX} WiFi level" "dBm" "signal_strength"
 
-    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_free_kb "Disk free" "kB"
-    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_used_pc "Disk used" "%"
+    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_free_kb "${SENSOR_PREFIX} Disk free" "kB"
+    [ $ENABLE_DISK   -eq 1 ] && publish_discovery_sensor disk_used_pc "${SENSOR_PREFIX} Disk used" "%"
 
     if [ $ENABLE_TOP_CPU -eq 1 ]; then
         i=1
         while [ $i -le $CONFIG_TOP_CPU_MAX ]; do
-            publish_discovery_sensor top_${i}_command_cpu_pc "Top $i command CPU load" "%"
-            publish_discovery_sensor top_${i}_command_name "Top $i command name" ""
+            publish_discovery_sensor top_${i}_command_cpu_pc "${SENSOR_PREFIX} Top $i command CPU load" "%"
+            publish_discovery_sensor top_${i}_command_name "${SENSOR_PREFIX} Top $i command name" ""
 
             i=$(($i+1))
         done
@@ -457,7 +460,7 @@ publish_discovery_all() {
             var_name="temperature_${sensor_name}_C"
             sensor_name=$(echo $sensor_name | sed 's/_temp$//' | sed 's/_/ /')
 
-            publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
+            publish_discovery_sensor $var_name "${SENSOR_PREFIX} Temperature $sensor_name" "°C" "temperature"
         done
     fi
 }
@@ -521,6 +524,11 @@ start() {
     STATE_TOPIC="$MQTT_PUB_PATH/$DEVICE_NAME/state"
 
     info "using device name: $DEVICE_NAME"
+    
+    sensor_prefix_generator
+    if ! [ -z "$SENSOR_PREFIX" ]; then
+        info "using sensor prefix: $SENSOR_PREFIX"
+    fi
 
     setup
     publish_discovery_all
@@ -542,4 +550,3 @@ else
 fi
 
 start
-
