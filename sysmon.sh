@@ -520,7 +520,7 @@ start() {
         exit 1
     fi
 
-    if [ $POSITION_UNIQUE_ID == "1" ]; then
+    if [ "$POSITION_UNIQUE_ID" = "1" ]; then
         DEVICE_NAME="$(cat /proc/sys/kernel/hostname)-$MAC_ID"
     else
         DEVICE_NAME="$MAC_ID-$(cat /proc/sys/kernel/hostname)"
