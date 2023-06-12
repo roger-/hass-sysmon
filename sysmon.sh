@@ -139,6 +139,7 @@ sensor_prefix_generator() {
     else 
         SENSOR_PREFIX=$SENSOR_PREFIX_OPTION
     fi
+    SENSOR_PREFIX=$(echo $SENSOR_PREFIX | sed "s/[^a-zA-Z0-9']/_/g" | sed "s/\_\{1,\}/_/g")
 }
 
 ##### Sensor functions #####
