@@ -11,6 +11,9 @@ HASS_MQTT_PREFIX="homeassistant"
 MQTT_PUB_PATH="/home/servers"
 MQTT_PUBLISH_PERIOD=20
 
+# Choos wether the unique machine ID should be at the end or beginning of the device name. Options: 0 = beginning (default), 1 = end.
+POSITION_UNIQUE_ID=0
+
 # name of network interface (e.g. eth0) otherwise first active one will be used
 NETWORK_IFACE=""
 
@@ -517,11 +520,15 @@ start() {
         exit 1
     fi
 
-    DEVICE_NAME="$MAC_ID-$(cat /proc/sys/kernel/hostname)"
+    if [ "$POSITION_UNIQUE_ID" = "1" ]; then
+        DEVICE_NAME="$(cat /proc/sys/kernel/hostname)-$MAC_ID"
+    else
+        DEVICE_NAME="$MAC_ID-$(cat /proc/sys/kernel/hostname)"
+    fi
     STATE_TOPIC="$MQTT_PUB_PATH/$DEVICE_NAME/state"
 
     info "using device name: $DEVICE_NAME"
-
+    
     setup
     publish_discovery_all
 
@@ -542,4 +549,3 @@ else
 fi
 
 start
-
