@@ -31,6 +31,7 @@ ENABLE_UPTIME=1
 ENABLE_TEMPERATURE=1
 ENABLE_PING=1
 ENABLE_TOP_CPU=0
+ENABLE_IP_ADDRESS=1
 
 CONFIG_PING_HOST="192.168.1.1"
 
@@ -273,6 +274,10 @@ ping_host() {
     print_key_vals ping_rtt_ms $rtt
 }
 
+ip_address() {
+    print_key_vals ip_address \"$(ip route get 8.8.8.8 | awk '{printf $7}')\"
+} 
+
 ##### Core network functions #####
 
 HTTP_HEADER_CTYPE="Content-Type: application/json"
@@ -383,7 +388,8 @@ publish_state_loop() {
         [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
         [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
         [ $ENABLE_TOP_CPU     -eq 1 ] && val=$(top_cpu)         && data="${data},$val"
-
+        [ $ENABLE_IP_ADDRESS  -eq 1 ] && val=$(ip_address)      && data="${data},$val"
+    
         json="{${data}}"
 
         debug "publishing state message"
@@ -460,6 +466,8 @@ publish_discovery_all() {
             publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
         done
     fi
+    
+    [ $ENABLE_IP_ADDRESS   -eq 1 ] && publish_discovery_sensor ip_address "IP Address" ""
 }
 
 ##### main #####
