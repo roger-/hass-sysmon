@@ -278,13 +278,13 @@ system_update() {
     # Muss für debian angepasst werden
     days=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s)) / 86400))
     # Muss für Debian angepasst werden.
-    numberUpdates=$((yay -Qu))
+    number_updates=$((yay -Qu))
     # Yay als root liefert eine zusätzliche Zeile
     #numberUpdates=$(($(yay -Qu) - 1))
     
     print_key_vals \
         last_update_days $days \
-        number_available_updates $numberUpdates
+        number_available_updates $number_updates
 }
 
 ##### Core network functions #####
