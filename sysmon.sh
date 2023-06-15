@@ -31,6 +31,7 @@ ENABLE_UPTIME=1
 ENABLE_TEMPERATURE=1
 ENABLE_PING=1
 ENABLE_TOP_CPU=0
+ENABLE_UPDATE_INFO=1
 
 CONFIG_PING_HOST="192.168.1.1"
 
@@ -273,6 +274,19 @@ ping_host() {
     print_key_vals ping_rtt_ms $rtt
 }
 
+system_update() {
+    # Muss für debian angepasst werden
+    days=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s)) / 86400))
+    # Muss für Debian angepasst werden.
+    numberUpdates=$((yay -Qu))
+    # Yay als root liefert eine zusätzliche Zeile
+    #numberUpdates=$(($(yay -Qu) - 1))
+    
+    print_key_vals \
+        last_update_days $days \
+        number_available_updates $numberUpdates
+}
+
 ##### Core network functions #####
 
 HTTP_HEADER_CTYPE="Content-Type: application/json"
@@ -383,6 +397,7 @@ publish_state_loop() {
         [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
         [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
         [ $ENABLE_TOP_CPU     -eq 1 ] && val=$(top_cpu)         && data="${data},$val"
+        [ $ENABLE_UPDATE_INFO -eq 1 ] && val=$(system_update)   && data="${data},$val"
 
         json="{${data}}"
 
@@ -460,6 +475,9 @@ publish_discovery_all() {
             publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
         done
     fi
+    
+    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor last_update_days "Last update" "Days"
+    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor number_available_updates "Number available updates" ""
 }
 
 ##### main #####
