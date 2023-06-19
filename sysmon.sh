@@ -30,7 +30,8 @@ ENABLE_WIFI=1
 ENABLE_UPTIME=1
 ENABLE_TEMPERATURE=1
 ENABLE_PING=1
-ENABLE_TOP_CPU=0
+ENABLE_TOP_CPU=1
+ENABLE_UPDATE_INFO=0
 
 CONFIG_PING_HOST="192.168.1.1"
 
@@ -273,6 +274,27 @@ ping_host() {
     print_key_vals ping_rtt_ms $rtt
 }
 
+system_update() {
+    distro_name="$(cat /usr/lib/os-release | grep -w 'NAME=')"
+
+    # Check for Debian
+    if [[ "$distro_name" == *"DEBIAN"* ]]; then
+        update_seconds=$(($(date +%s) - $(date -r "/var/lib/dpkg/lock" +%s)))
+        number_updates=$(($(apt update 2>/dev/null | grep packages | cut -d '.' -f 1 | awk '{printf $1}')))
+    elif [[ "$distro_name" == *"Arch Linux"* ]]; then
+        update_seconds=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s))))
+        if cmd_exists yay; then
+            number_updates=$(($(yay -Sy | yay -Qu | wc -l) - 1))
+        elif cmd_exists pacman; then
+            number_updates=$((pacman -Sy | pacman -Qn | wc -l))
+        fi
+    fi
+    
+    print_key_vals \
+        last_update_days $update_seconds \
+        number_available_updates $number_updates
+}
+
 ##### Core network functions #####
 
 HTTP_HEADER_CTYPE="Content-Type: application/json"
@@ -383,6 +405,7 @@ publish_state_loop() {
         [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
         [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
         [ $ENABLE_TOP_CPU     -eq 1 ] && val=$(top_cpu)         && data="${data},$val"
+        [ $ENABLE_UPDATE_INFO -eq 1 ] && val=$(system_update)   && data="${data},$val"
 
         json="{${data}}"
 
@@ -460,6 +483,9 @@ publish_discovery_all() {
             publish_discovery_sensor $var_name "Temperature $sensor_name" "°C" "temperature"
         done
     fi
+    
+    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor last_update_days "Last update" "s" "duration"
+    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor number_available_updates "Number available updates" ""
 }
 
 ##### main #####
