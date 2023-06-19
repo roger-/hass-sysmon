@@ -30,8 +30,8 @@ ENABLE_WIFI=1
 ENABLE_UPTIME=1
 ENABLE_TEMPERATURE=1
 ENABLE_PING=1
-ENABLE_TOP_CPU=0
-ENABLE_UPDATE_INFO=1
+ENABLE_TOP_CPU=1
+ENABLE_UPDATE_INFO=0
 
 CONFIG_PING_HOST="192.168.1.1"
 
@@ -275,15 +275,23 @@ ping_host() {
 }
 
 system_update() {
-    # Muss für debian angepasst werden
-    days=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s)) / 86400))
-    # Muss für Debian angepasst werden.
-    number_updates=$((yay -Qu))
-    # Yay als root liefert eine zusätzliche Zeile
-    #numberUpdates=$(($(yay -Qu) - 1))
+    distro_name="$(cat /usr/lib/os-release | grep -w 'NAME=')"
+
+    # Check for Debian
+    if [[ "$distro_name" == *"DEBIAN"* ]]; then
+        update_seconds=$(($(date +%s) - $(date -r "/var/lib/dpkg/lock" +%s)))
+        number_updates=$(($(apt update 2>/dev/null | grep packages | cut -d '.' -f 1 | awk '{printf $1}')))
+    elif [[ "$distro_name" == *"Arch Linux"* ]]; then
+        update_seconds=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s))))
+        if cmd_exists yay; then
+            number_updates=$(($(yay -Sy | yay -Qu | wc -l) - 1))
+        elif cmd_exists pacman; then
+            number_updates=$((pacman -Sy | pacman -Qn | wc -l))
+        fi
+    fi
     
     print_key_vals \
-        last_update_days $days \
+        last_update_days $update_seconds \
         number_available_updates $number_updates
 }
 
@@ -476,7 +484,7 @@ publish_discovery_all() {
         done
     fi
     
-    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor last_update_days "Last update" "Days"
+    [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor last_update_days "Last update" "s" "duration"
     [ $ENABLE_UPDATE_INFO   -eq 1 ] && publish_discovery_sensor number_available_updates "Number available updates" ""
 }
 
