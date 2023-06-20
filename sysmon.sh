@@ -275,18 +275,34 @@ ping_host() {
 }
 
 system_update() {
-    distro_name="$(cat /usr/lib/os-release | grep -w "NAME=")"
+    if [ -f /etc/os-release ]; then
+        # freedesktop.org and systemd
+        . /etc/os-release
+        distro_name=$NAME
+    elif type lsb_release >/dev/null 2>&1; then
+        # linuxbase.org
+        distro_name=$(lsb_release -si)
+    elif [ -f /etc/lsb-release ]; then
+        # For some versions of Debian/Ubuntu without lsb_release command
+        . /etc/lsb-release
+        distro_name=$DISTRIB_ID
+    elif [ -f /etc/debian_version ]; then
+        # Older Debian/Ubuntu/etc.
+        distro_name="Debian"
+    else
+        # Fall back to uname, e.g. "Linux <version>", also works for BSD, etc.
+        distro_name=$(uname -s)
+    fi
 
-    # Check for Debian
-    if [ -n $(echo "${distro_name}" | grep -q "Debian") ]; then
+    if [ -n "$(echo "${distro_name}" | sed -n '/Debian/p')" ]; then
         update_seconds=$(($(date +%s) - $(date -r "/var/lib/dpkg/lock" +%s)))
         number_updates=$(($(apt update 2>/dev/null | grep packages | cut -d '.' -f 1 | awk '{printf $1}')))
-    elif [ if [ -n $(echo "${distro_name}" | grep -q "Arch Linux") ]; then ]; then
+    elif [ -n " $(echo "${distro_name}" | sed -n '/Arch Linux/p')" ]; then
         update_seconds=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s))))
         if cmd_exists yay; then
-            number_updates=$(($(yay -Sy | yay -Qu | wc -l) - 1))
+            number_updates=$(($(yay -Sup | yay -Qu | wc -l) - 1))
         elif cmd_exists pacman; then
-            number_updates=$((pacman -Sy | pacman -Qn | wc -l))
+            number_updates=$((pacman -Sup | pacman -Qn | wc -l))
         fi
     fi
     
