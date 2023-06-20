@@ -278,10 +278,10 @@ system_update() {
     distro_name="$(cat /usr/lib/os-release | grep -w "NAME=")"
 
     # Check for Debian
-    if [ "$distro_name" = *"DEBIAN"* ]; then
+    if [ -n $(echo "${distro_name}" | grep -q "Debian") ]; then
         update_seconds=$(($(date +%s) - $(date -r "/var/lib/dpkg/lock" +%s)))
         number_updates=$(($(apt update 2>/dev/null | grep packages | cut -d '.' -f 1 | awk '{printf $1}')))
-    elif [ "$distro_name" = *"Arch Linux"* ]; then
+    elif [ if [ -n $(echo "${distro_name}" | grep -q "Arch Linux") ]; then ]; then
         update_seconds=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s))))
         if cmd_exists yay; then
             number_updates=$(($(yay -Sy | yay -Qu | wc -l) - 1))
