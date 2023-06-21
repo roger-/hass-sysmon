@@ -300,9 +300,9 @@ system_update() {
     elif [ -n " $(echo "${distro_name}" | sed -n '/Arch Linux/p')" ]; then
         update_seconds=$((($(date +%s) - $(date -d $(sed -n '/upgrade$/x;${x;s/.\([0-9-]*\).*/\1/p}' /var/log/pacman.log) +%s))))
         if cmd_exists yay; then
-            number_updates=$(($(yay -Sup | yay -Qu | wc -l) - 1))
+            number_updates=$(($(yay -Sy > /dev/null && yay -Qu | wc -l) - 1))
         elif cmd_exists pacman; then
-            number_updates=$((pacman -Sup | pacman -Qn | wc -l))
+            number_updates=$((pacman -Sy > /dev/null && pacman -Qu | wc -l))
         fi
     fi
     
