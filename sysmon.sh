@@ -398,6 +398,7 @@ publish_state_loop() {
     info "publishing state to topic $STATE_TOPIC every $MQTT_PUBLISH_PERIOD s"
 
     time_pub_next=$(date +"%s")
+    time_pub_next_update=$(date +"%s")
 
     while true
     do
@@ -421,7 +422,10 @@ publish_state_loop() {
         [ $ENABLE_PING        -eq 1 ] && val=$(ping_host)       && data="${data},$val"
         [ $ENABLE_TEMPERATURE -eq 1 ] && val=$(temperature)     && data="${data},$val"
         [ $ENABLE_TOP_CPU     -eq 1 ] && val=$(top_cpu)         && data="${data},$val"
-        [ $ENABLE_UPDATE_INFO -eq 1 ] && val=$(system_update)   && data="${data},$val"
+        if [ $(($time_pub_next_update - $time_now)) -lt 1 ]; then
+            [ $ENABLE_UPDATE_INFO -eq 1 ] && val=$(system_update)   && data="${data},$val"
+            time_pub_next_update=$(( $time_pub_next_update + 86400))
+        fi
 
         json="{${data}}"
 
