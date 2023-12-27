@@ -11,6 +11,9 @@ HASS_MQTT_PREFIX="homeassistant"
 MQTT_PUB_PATH="/home/servers"
 MQTT_PUBLISH_PERIOD=20
 
+# Define sensor prefix. Options: 0 = none (default and if not 1 or string), 1 = hostname, custom if string
+SENSOR_PREFIX_OPTION=0
+
 # name of network interface (e.g. eth0) otherwise first active one will be used
 NETWORK_IFACE=""
 
@@ -126,6 +129,17 @@ temperature_sensor_names() {
     for tz in /sys/class/thermal/thermal_zone*; do
         cat "$tz"/type | sed 's/-/_/'
     done
+}
+
+sensor_prefix_generator() {
+    if [ "$SENSOR_PREFIX_OPTION" = "0" ]; then
+        SENSOR_PREFIX=""
+    elif [ "$SENSOR_PREFIX_OPTION" = "1" ]; then
+        SENSOR_PREFIX=$(cat /proc/sys/kernel/hostname)
+    else 
+        SENSOR_PREFIX=$SENSOR_PREFIX_OPTION
+    fi
+    SENSOR_PREFIX=$(echo $SENSOR_PREFIX | sed "s/[^a-zA-Z0-9']/_/g" | sed "s/\_\{1,\}/_/g" | sed "s/[A-Z]/\L&/g")
 }
 
 ##### Sensor functions #####
@@ -522,6 +536,11 @@ start() {
 
     info "using device name: $DEVICE_NAME"
 
+    sensor_prefix_generator
+    if ! [ -z "$SENSOR_PREFIX" ]; then
+        info "using sensor prefix: $SENSOR_PREFIX"
+    fi
+
     setup
     publish_discovery_all
 
@@ -542,4 +561,3 @@ else
 fi
 
 start
-
